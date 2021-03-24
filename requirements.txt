@@ -1,0 +1,2 @@
+ipfshttpclient==0.7.0.a1
+web3==5.16.0
