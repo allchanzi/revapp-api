@@ -6,6 +6,7 @@ from web3 import Web3
 from web3.logs import (IGNORE,)
 import os
 from queue import Queue
+import requests
 import time
 import shutil
 from threading import Thread
@@ -16,6 +17,7 @@ ETHERNITY_ACC = os.environ['ETHERNITY_ACC']
 ETHERNITY_KEY = os.environ['ETHERNITY_KEY']
 ROPSTEN_ACC   = os.environ['ROPSTEN_ACC']
 ROPSTEN_KEY   = os.environ['ROPSTEN_KEY']
+API_KEY       = os.environ['API_KEY']
 
 ETH_GATEWAY    = 'https://ropsten.infura.io/v3/' + INFURA_KEY
 IPFS_GATEWAY   = '/dns/ipfs.infura.io/tcp/5001/https'
@@ -90,22 +92,19 @@ def write_result_to_ipfs(data) -> str:
     return client.add_json(data)
 
 def write_hash_to_blockchain(results):
-    print([result.get('id') for result in json.loads(results.get('result'))])
-    threads = []
-    for result in json.loads(results.get('result')):
+    nonce = w3.eth.getTransactionCount(ACCOUNT, 'pending')
+    for i, result in enumerate(json.loads(results.get('result'))):
         review_id = result.get('id')
         result_json = {k: v for k, v in result.items() if k not in ('id', )}
         result_json['txIn'] = results.get("txIn", "")
         result_json['txOut'] = results.get("txOut", "")
         result_hash = write_result_to_ipfs(result_json)
-        print(result_hash)
-        print(review_id)
-        threads.append(Thread(target=send_update, args=(int(review_id), result_hash,)))
+        send_update(int(review_id), result_hash, nonce + i)
 
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
+
+def get_price():
+    response = requests.get("https://ethgasstation.info/api/ethgasAPI.json?api-key=" + API_KEY)
+    return json.loads(response.content.decode('utf8')).get("fastest")
 
 def get_result(algorithm_hash, data_hash, ean):
     request = etnyPoX(script=algorithm_hash, fileset=data_hash, client=client, acc=ETHERNITY_ACC, key=ETHERNITY_KEY)
@@ -135,25 +134,24 @@ def load_smart_contract():
             print(e)
             time.sleep(1)
 
-def send_update(id, hash):
-    try:
-        nonce = w3.eth.getTransactionCount(ACCOUNT)
-        block = w3.eth.getBlock("latest")
-        gasLimit = block.gasLimit
-        gasPrice = w3.eth.gasPrice * 2
-        unicorn_txn = contract.functions.updateReviewResult(id, hash).buildTransaction({
-            'gas': gasLimit,
-            'chainId': 3,
-            'nonce': nonce,
-            'gasPrice': int(gasPrice),
-        })
+def send_update(id, hash, nonce):
+    for i in range(20):
+        try:
+            unicorn_txn = contract.functions.updateReviewResult(int(id), hash).buildTransaction({
+                'gas': 1000000,
+                'gasPrice': 50000000000,
+                'chainId': 3,
+                'nonce': nonce,
+            })
 
-        signed_txn = w3.eth.account.sign_transaction(unicorn_txn, private_key=PRIVATE_KEY)
-        w3.eth.sendRawTransaction(signed_txn.rawTransaction)
-        hash = w3.toHex(w3.sha3(signed_txn.rawTransaction))
-        receipt = w3.eth.waitForTransactionReceipt(hash)
-    except Exception as e:
-        return
+            signed_txn = w3.eth.account.sign_transaction(unicorn_txn, private_key=PRIVATE_KEY)
+            w3.eth.sendRawTransaction(signed_txn.rawTransaction)
+            tx_hash = w3.sha3(signed_txn.rawTransaction)
+            receipt = w3.eth.waitForTransactionReceipt(tx_hash)
+
+        except Exception as e:
+            print()
+            return
 
 
 
